@@ -1,0 +1,194 @@
+---
+title: "Universal Telemetry Data Filter"
+author: "Christopher Bolte"
+date: "7/13/2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+```
+
+
+```{r}
+remove_bad_initial_detections <- function(df_detections, rkm_threshold) {
+  df <- df_detections
+  df <- df[order(df$detectdate, decreasing = FALSE), ] #this will be substituted for the detectdate option, arranged from earliest to latest detection.
+  if (nrow(df) > 1) {
+  all_rows <- 2:nrow(df)
+  init_rkm <- df$rkm[1] 
+  for (row in all_rows) {
+    new_rkm <- df$rkm[row] 
+    diff_rkm <- abs(init_rkm - new_rkm)
+    #print(diff_rkm)
+    if (diff_rkm > 0 & diff_rkm < rkm_threshold) {#rkm changed, but not more than the threshold. Keep detections.
+      break  
+    }
+    if (diff_rkm >= rkm_threshold) { #remove detections from 1: row-1, since row is where it changed.
+      df <- df[row:nrow(df), ]
+      break
+      }
+    }
+  }
+  return(df)
+}
+```
+
+```{r}
+remove_bad_final_detections <- function(df_detections, rkm_threshold) {
+  df <- df_detections
+  df <- df[order(df$detectdate, decreasing = TRUE), ] #this will be substituted for the detectdate option, arranged from earliest to latest detection.
+  #Decreasing = TRUE means that it will iterate through the last detections first
+  if (nrow(df) > 1){
+    all_rows <- 2:nrow(df)
+    init_rkm <- df$rkm[1] #change rkm to detectdate
+    for (row in all_rows) {
+      new_rkm <- df$rkm[row] #change rkm to detectdate. 
+      diff_rkm <- abs(init_rkm - new_rkm)
+      if (diff_rkm > 0 & diff_rkm < rkm_threshold) {#rkm changed, but not more than the threshold. Keep detections.
+        break  
+      }
+      if (diff_rkm >= rkm_threshold) { #remove detections from 1: row-1, since row is where it changed.
+        df <- df[row:nrow(df), ]
+        break
+      }
+    }
+  }
+  df <- df[order(df$detectdate, decreasing=TRUE), ] #change
+  return(df)
+}
+```
+
+```{r}
+
+remove_multiple_middle_detections <- function(df_detections, rkm_threshold) {
+  df <- df_detections
+  all_rows <- c(1:nrow(df))
+  df <- df[order(df$detectdate, decreasing = FALSE), ] #Order so that first detection is iterated first.
+  df$index <- c(1:nrow(df)) #makes reference numbers for each row that can be called on with a which function    all_rows <- c(1:nrow(df))
+  on_off <- 'OFF'
+  row_remove_vector <- c()
+  
+  for (row in all_rows) {
+    current_row <- row #integer value used to find position later
+    next_row <- row + 1 #integer value used to find position later
+    current_rkm <- df$rkm[row]
+    next_rkm <- df$rkm[row + 1]
+    diff_rkm <- abs(current_rkm - next_rkm)
+    if (row == nrow(df)) {
+      break
+    }      
+    if (current_rkm != next_rkm & diff_rkm > rkm_threshold & on_off == 'OFF') { #Fish made a movement over the rkm threshold and should be treated as a bad detection, so long as all other conditions are met.
+      rkm_position <- current_row #last row where there are valid detections
+      new_rkm_position <- next_row #first row where there MAY be invalid detections 
+      on_off <- 'ON'
+      next
+    }
+    if (current_rkm != next_rkm & diff_rkm > rkm_threshold & on_off == 'ON') { #Fish has made a movement over rkm_threshold and the detections prior to this receiver also were over the rkm threshold        #Action should be taken to remove the detections from the data.frame
+      new_rkm_position <- current_row #last position of invalid detections
+      removal_rows <- which(df$index > rkm_position & df$index <= new_rkm_position)
+      removal_rows <- c(removal_rows)
+      row_remove_vector <- c(row_remove_vector, removal_rows)        
+      on_off <- 'OFF'
+    }
+    if (current_rkm != next_rkm & diff_rkm < rkm_threshold & on_off == 'ON') {#this means that the potentially bad receiver does not fit the removal criteria.
+      #resume the normal loop without removing anything.
+      on_off <- 'OFF'
+    } 
+  } #row by row for loop ends here
+  df <- df[!df$index %in% row_remove_vector, ] #remove invalid detections
+  df$index <- NULL
+  return(df)
+}
+
+```
+
+
+```{r}
+
+filter_telemetry_data_water_year <- function(df_detections, threshold_rkm) {
+  df <- df_detections
+  df <- df[complete.cases(df), ]
+  all_rows <- c(1:nrow(water_year_data))
+  all_filtered_detections <- NULL
+  for (row in all_rows) {
+    start <- water_year_data$start_date[row]
+    end <- water_year_data$end_date[row]
+    print(start)
+    print(end)
+    ind_year <- subset(df, detectdate >= start & detectdate <= end) #subsetted by water year
+    print(nrow(ind_year))
+    all_tags <- unique(ind_year$tagid)
+    new_detections <- NULL
+    count <- 1
+    total_count <- length(all_tags)
+    for (tag in all_tags) {
+      print(tag)
+      print(paste(count, '/', total_count))
+      ind_tag <- subset(ind_year, tagid == tag)
+      ind_tag <- ind_tag[is.na(ind_tag$rkm) == FALSE, ]
+      print('Removing Errant Initial Detections')
+      ind_tag <- remove_bad_initial_detections(ind_tag, threshold_rkm)
+      print('Removing Errant Final Detections')
+      ind_tag <- remove_bad_final_detections(ind_tag, threshold_rkm)
+      print('Removing Errant Middle Detections')
+      ind_tag <- remove_multiple_middle_detections(ind_tag, threshold_rkm)
+      new_detections <- rbind(new_detections, ind_tag)
+      count <- count + 1
+    }
+    all_filtered_detections <- rbind(all_filtered_detections, new_detections)
+  }
+  return(all_filtered_detections)
+}
+```
+
+
+```{r}
+import.clean.export <- function(v_species) {
+  all_species <- v_species
+  for (v in all_species) {
+    print(v)
+    filepath <- paste("~/Desktop/TRUE FINAL EVENNESS PROJECT/CSVs/", v, ".csv", sep='')
+    print(filepath)
+    #ind_species <- read_csv("~/Desktop/R/Telemetry Data Filters/CSVs/", v, ".csv") #import csv
+    ind_species <- read_csv(paste("~/Desktop/TRUE FINAL EVENNESS PROJECT/CSVs/", v, ".csv", sep = '')) #import csv
+    
+    #change headers of csv.
+    to_be_filtered <- select(ind_species, detectdate=DetectDate, tagid=TagID, rkm=Detect_rkm, Location,
+                         Length, Length_Type, Release_Date, Release_rkm, Species, Tag_Type)
+    new_det <- filter_telemetry_data_water_year(to_be_filtered, 75)
+    new_det <- select(new_det, DetectDate=detectdate, TagID=tagid, Detect_rkm=rkm, Location, Length,
+                      Length_Type, Release_Date, Release_rkm, Species, Tag_Type)
+    write.csv(new_det, paste('New_Filtered_', v, '.csv', sep=''))
+  }
+}
+
+```
+
+
+```{r}
+
+#Will need to alter path in import.clean.export function in two places, along with the line below importing water_year_data.
+water_year_data <- read_csv("~/Desktop/TRUE FINAL EVENNESS PROJECT/CSVs/water_year_data.csv")
+
+species_vector <- c('Green_Sturgeon')
+import.clean.export(species_vector)
+
+species_vector <- c('Sacramento_pikeminnow')
+import.clean.export(species_vector)
+
+species_vector <- c('Steelhead')
+import.clean.export(species_vector)
+
+species_vector <- c('Striped_bass')
+import.clean.export(species_vector)
+
+species_vector <- c('White_Sturgeon')
+import.clean.export(species_vector)
+```
+
+
