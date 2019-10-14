@@ -1,0 +1,511 @@
+---
+title: "All Evenness by Species"
+author: "Christopher Bolte"
+date: "May 17, 2018"
+output: html_document
+---
+
+Load the following packages:
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(vegan)
+library(lubridate)
+library(readr)
+library(gglorenz)
+library(ineq)
+```
+
+```{r}
+#library(readr)
+#new_det <- select(det, DetectDate, Detection_GPS, TagID, Location, Species, Release_Location, Release_Date, Release_GPS, Release_rkm = Release_RKm, Detect_rkm = Detection_RKm, Length_Type, Tag_Type)
+
+```
+
+The order of the following functions goes as follows, and can be seperated into the following steps.
+
+1. Get the motilities of all species of fish above a specified length.
+  Function: get_species_motility(detection_df, species_id, minimum_fish_length)
+    #Uses the functions: determine_years(), get_all_motilities_years() (uses get_year_motility(), add_rank())
+  
+  This generates a motility data.frame that will be used in other functions.
+  
+2. Use smush_motility to reorder ranking system to account for all individuals across ALL years instead of for each individual year.
+  Function: smush_motility(df_motility)
+    #uses add_rank() function.
+    
+3. Use all_years_evenness() function to generate plots for each species, saving each plot to a simple variable (i.e letters a-e),
+then combine these variables into a list, the use the do.call() function with grid.arrange to plot all of them on the same plot.
+  #all_years_evenness uses lm_eqn() function
+
+
+
+**Load the Following Functions Before Running Example Code**
+
+
+
+```{r}
+get_year_motility <- function(df, low_rkm=0, high_rkm=550, species_name, str_startdate='2000-01-01 00:00:00', str_enddate='2100-01-01 00:00:00', study_year_month) {
+  det <- df[df$Detect_rkm > low_rkm & df$Detect_rkm < high_rkm, ] #Takes detections only within specified rkms
+  det <- df[df$DetectDate > as.character(str_startdate) & df$DetectDate < as.character(str_enddate), ] #takes detections only within certain dates #Maybe change as.character back?
+  #GLOBALdet <<- det
+  df_allmoves <- NULL
+  print(nrow(det))
+  if (nrow(det) > 0) {
+    det$Detect_rkm <- as.numeric(det$Detect_rkm)
+    det$Release_rkm <- as.numeric(det$Release_rkm)
+    det <- det[is.na(det$Detect_rkm) == FALSE, ]
+    #det <- det[is.na(det$Release_rkm) == FALSE, ]
+    number_detections <- nrow(det) #number of detections in a single year
+    all_tags <- c(unique(det$TagID))
+    number_fish <- length(all_tags) #number of individuals detected in a single year. Make sure that these are fish above the specifed length!!!
+    
+    count <- 1
+    total_count <- length(all_tags)
+    print(species_name)
+    print(all_tags)
+    for (tag in all_tags) {
+      #Get fish that have been detected for over a specified number of years.
+      print(paste(count, '/', total_count))
+      ind_tag <- det[det$TagID == tag, ]
+      #print(ind_tag)
+      #print(nrow(ind_tag))
+      if (nrow(ind_tag) > 0) {
+        ind_tag <- ind_tag[order(ind_tag$DetectDate), ]
+        first_det <- min(ind_tag$DetectDate)
+        last_det <- max(ind_tag$DetectDate)
+        length <- ind_tag$Length[1]
+        all_rows <- c(1:nrow(ind_tag))
+        release_rkm <- ind_tag$Release_rkm[1]
+        total_rkm <- 0
+        for (row in all_rows) {
+          first_rkm <- ind_tag$Detect_rkm[row]
+          second_rkm <- ind_tag$Detect_rkm[row + 1]
+          if (row == nrow(ind_tag)) { #may need to add some subtleties to make sure that if the last detection is different from the second to last that this gets accounted for.
+            species <- species_name
+            last_location <- ind_tag$Location[row]
+            df_allmoves <- rbind(df_allmoves, data.frame(study_year_month, tag, total_rkm, species, length, first_det, last_det, number_fish, number_detections, last_location))
+            break
+          }
+          if (first_rkm != second_rkm) {
+            diff_rkm <- abs(first_rkm - second_rkm)
+            total_rkm <- total_rkm + diff_rkm
+          }
+        }
+        count <- count + 1
+      }
+    }
+  }
+  #Add a statement that will add bins to the analysis, will need to change how it makes the ggplots in other functions
+  return(df_allmoves)
+}
+
+```
+
+
+```{r}
+add_rank <- function(df) {
+  det <- df
+  det <- det[order(det$total_rkm, decreasing = TRUE), ]
+  det$index <- c(1:nrow(det))
+  return(det)
+}
+
+```
+
+```{r}
+determine_years <- function(df) {
+  test_df <- df
+  test_df$DetectDate <- as.Date(test_df$DetectDate, format = '%y')
+  test_df$DetectDate <- year(as.Date(test_df$DetectDate, '%y-%m-%d'))
+  years <- c(unique(test_df$DetectDate))
+  df_all_years <- NULL
+  for (y in years) {
+    ind_yearr <- df_years[df_years$year == y, ]
+    if (nrow(ind_yearr) > 0) {
+     df_all_years <- rbind(df_all_years, ind_yearr)
+    }
+  }
+  df_all_years <- df_all_years[order(df_all_years$year, decreasing = FALSE), ]
+  return(df_all_years)
+}
+```
+
+
+```{r}
+get_all_motilities_years <- function(df, species_name, year_list) {
+  #Year list should have 3 entries, 'year', 'start', 'end'. This should be made before the loop
+  df_all_motilities <- NULL
+  all_years <- 1:nrow(year_list)
+  for (y in all_years) { #y should be a number index
+    start_datetime <- as.character(year_list$start_date[y])
+    end_datetime <- as.character(year_list$end_date[y])
+    year_month <- as.character(year_list$year[y])
+    print(start_datetime)
+    print(end_datetime)
+    print(year_month)
+    motility <-  df %>% 
+      get_year_motility(species_name = species_name, str_startdate = start_datetime, str_enddate = end_datetime, study_year_month=year_month) %>%
+      add_rank
+    df_all_motilities <- rbind(df_all_motilities, motility)
+  }
+  return(df_all_motilities)
+}
+
+```
+
+
+
+```{r}
+
+lm_eqn <- function(df){
+  new_df <- df
+  #new_df <- subset(new_df, proportion > 0.0000)
+  m <- lm(proportion ~ rank, new_df);
+  eq <- substitute(italic(proportion) == a + b %.% italic(rank)*","~~italic(r)^2~"="~r2, 
+                   list(a = format(coef(m)[1], digits = 2), 
+                        b = format(coef(m)[2], digits = 2), 
+                        r2 = format(summary(m)$r.squared, digits = 3)))
+  as.character(as.expression(eq));                 
+}
+```
+
+
+
+```{r}
+get_species_motility <- function(df, species_id, int_length) { ###Add this to Markdown Documents !!!
+  ind_species <- subset(df, Species == species_id)
+  ind_species <- subset(ind_species, is.null(ind_species$Length) == FALSE)
+  ind_species <- subset(ind_species, Length != 'NULL')
+  ind_species$Length <- as.numeric(ind_species$Length)
+  ind_species <- subset(ind_species, Length > int_length)
+  df_year_info <- determine_years(ind_species)
+  all_motilities <- ind_species %>% get_all_motilities_years(species_id, df_year_info) %>%  purge_ggfish() %>%  add_rank_byyear()
+  return(all_motilities)
+}
+
+```
+
+
+```{r}
+add_rank_byyear <- function(df) { ### Add to Markdown Documents
+  det <- df
+  new_df <- NULL
+  all_years <- unique(det$study_year_month)
+  for (y in all_years) {
+    print(y)
+    ind_year <- subset(det, study_year_month == y)
+    ind_year <- ind_year[order(ind_year$total_rkm, decreasing = TRUE), ]
+    ind_year$index <- c(1:nrow(ind_year))
+    new_df <- rbind(new_df, ind_year)
+  }
+  return(new_df)
+}
+```
+
+
+```{r}
+all_years_evenness <- function(df, title) { #df should be a motility data.frame that has gone through the smush_motility function.
+  motility <- df
+  
+  #remove values that will log transform to infinity
+  #motility <- subset(motility, proportion > 0.0000)
+  
+  motility$proportion <- signif(motility$proportion, digits = 5)
+  df_shannon <- motility %>% group_by(proportion) %>% tally()
+  specnumber <- length(unique(df_shannon$proportion))
+  shannon_index <- diversity(df_shannon$n)
+  pielou_index <- signif(shannon_index/(specnumber), digits = 3)
+  print(pielou_index)
+  
+  ggplot(data = motility, aes(x=rank, y= proportion)) + 
+    geom_point() + 
+    geom_line() +
+    theme(legend.position = 'none') +
+    xlab('Rank') +
+    ylab('Proportion') +
+    ggtitle(title) +
+    #ggtitle(paste(study_year, 'Rank vs Motility of', species_name, 'in Sacramento/San Joaquin Watershed')) +
+    theme(plot.title = element_text(size = 10, face = "bold")) +
+    theme(axis.title = element_text(size=8)) +
+    coord_cartesian(ylim = c(0, 1)) + 
+    geom_smooth(method='lm', col='red', size=.25, se = FALSE) +
+    annotate('text', x=nrow(motility)/4, y=.5, label = paste('Index of Evenness:', pielou_index, sep = ' '), size = 2.5) + 
+    geom_text(x = nrow(motility)/3, y = .75, label = lm_eqn(motility), parse = TRUE, size = 2.5)
+}
+
+```
+
+```{r}
+smush_motility <- function(df) {
+  mot <- df
+  mot$index <- NULL
+  new_mot <- add_rank(mot)
+  return(new_mot)
+}
+```
+
+```{r}
+get_proportionality_total <- function(df) {
+  df_mot <- df
+  df_mot$proportion <- NA
+  df_mot$rank <- NA
+  all_rows <- c(1:nrow(df_mot))
+  all_rkms <- sum(df_mot$total_rkm)
+  for (row in all_rows) {
+    x <- df_mot$total_rkm[row]
+    df_mot$proportion[row] <- x/all_rkms
+  }
+  df_mot <- df_mot[order(df_mot$proportion, decreasing = TRUE), ]
+  df_mot$rank <- c(1:nrow(df_mot))
+  return(df_mot)
+}
+```
+
+```{r}
+purge_ggfish <- function(df, min_rkm = 2) {
+  new_mot <- df[!(df$total_rkm <= min_rkm & substr(df$last_location, 1, 2) == 'GG'), ]
+  return(new_mot)
+}
+```
+
+
+```{r}
+all_years_evenness_gini <- function(df, title) { #df should be a motility data.frame that has gone through the smush_motility function.
+  df_prop <- df
+  
+  #remove values that will log transform to infinity
+  #df_prop <- subset(df_prop, proportion > 0.0000)
+  
+  gini_index <- signif(ineq(df_prop$proportion, type = 'Gini'), digits = 3)
+  
+  ggplot(data = df_prop, aes(x=rank, y= proportion)) + 
+    geom_point() + 
+    geom_line() +
+    theme(legend.position = 'none') +
+    xlab('Rank') +
+    ylab('Proportion') +
+    ggtitle(title) +
+    #ggtitle(paste(study_year, 'Rank vs Proportion', species_name, 'in Sacramento/San Joaquin Watershed')) +
+    theme(plot.title = element_text(size = 10, face = "bold")) +
+    theme(axis.title = element_text(size=8)) +
+    coord_cartesian(ylim = c(0, .1)) + 
+    geom_smooth(method='lm', col='red', size=.25, se = FALSE) +
+    annotate('text', x=nrow(df_prop)/4, y=.025, label = paste('Gini Coefficient:', gini_index, sep = ' '), size = 2.5) + 
+    geom_text(x = nrow(df_prop)/3, y = .75, label = lm_eqn(df_prop), parse = TRUE, size = 2.5)
+}
+```
+
+```{r}
+get_lorenz_interspecies <- function(df_proportion, species_name) { 
+  df_prop <- df_proportion
+  gini_index <- signif(ineq(df_prop$proportion), digits = 3)
+  print(gini_index)
+  p <- ggplot(data = df_prop, aes(proportion)) +
+    ggtitle(species_name) +
+    stat_lorenz(desc = FALSE) +
+    coord_fixed() +
+    geom_abline(linetype = "dashed") +
+    theme(axis.title = element_text(size = 6), plot.title = element_text(size = 8)) +
+    annotate('text', x = .25, y = .75, label = paste('Gini Index', gini_index), size = 2)
+  return(p)
+}
+```
+
+```{r}
+#species_name should be any of 'Green Sturgeon', 'White Sturgeon', 'Sacramento Pikeminnow', 'Steelhead', 'Striped Bass'
+all_years_evenness_species <- function(df, species_name) { #df should be a motility data.frame that has gone through the smush_motility function.
+  
+  #Will need to adjust position of Pielous index based on SPECIES
+  
+  df_prop <- df
+  species <- species_name
+  species_color <- NA
+  if (species_name == 'Green Sturgeon') { #Could add in a position for where Pielou's goes?
+    species_color <- 'mediumaquamarine'
+    p_location <- 110
+    ybreak <- c(0, .025, .05)
+    ylimit <- c(0, .05)
+  }
+  if (species_name == 'White Sturgeon') {
+    species_color <- 'darkgoldenrod1'
+    p_location <- 18
+    ybreak <- c(0, .10, .20)
+    ylimit <- c(0, .20)
+  }
+  if (species_name == 'Sacramento Pikeminnow') {
+    species_color <- 'black'
+    p_location <- 50
+    ybreak <- c(0, .25, .5)
+    ylimit <- c(0, .5)
+  }
+  if (species_name == 'Steelhead') {
+    species_color <- 'deepskyblue2'
+    p_location <- 50
+    ybreak <- c(0, .035, .075)
+    ylimit <- c(0, .075)
+  }
+  if (species_name == 'Striped Bass') {
+    species_color <- 'orangered2'
+    p_location <- 9
+    ybreak <- c(0, .03, .06)
+    ylimit <- c(0, .06)
+  }
+  
+  select_df <- select(df_prop, study_year_month, total_rkm)
+  specnumber <- length(unique(select_df$t))
+  shannon_index <- diversity(select_df$total_rkm)
+  pielou_index <- signif(shannon_index/(log(specnumber)), digits = 2)
+  
+  ggplot(data = df_prop, aes(x=rank, y= proportion)) + 
+    geom_line(size = 2, color = species_color) +
+    theme(legend.position = 'none') +
+    #ggtitle(species) +
+    #ggtitle(paste(study_year, 'Rank vs df_prop of', species_name, 'in Sacramento/San Joaquin Watershed')) +
+    #theme(plot.title = element_text(size = 4, face = "bold")) +
+    scale_y_continuous(breaks = ybreak) +
+    coord_cartesian(ylim = ylimit, xlim <- c(1,nrow(df_prop))) + 
+    annotate('text', x=nrow(df_prop)/4, y=ylimit[2]*.9, label = paste("Pielou's Index:", pielou_index, sep = ' '), size = 3.5) + #change text on plot
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(),
+          axis.title.x=element_blank(),
+          axis.title.y=element_blank())
+}
+
+```
+
+```{r}
+get_lorenz_interspecies <- function(df_proportion, species_name) { 
+  df_prop <- df_proportion
+  species <- species_name
+  species_color <- NA
+  if (species_name == 'Green Sturgeon') { #Could add in a position for where Pielou's goes?
+    species_color <- 'mediumaquamarine'
+  }
+  if (species_name == 'White Sturgeon') {
+    species_color <- 'darkgoldenrod1'
+  }
+  if (species_name == 'Striped Bass') {
+    species_color <- 'orangered2'
+  }
+  if (species_name == 'Sacramento Pikeminnow') {
+    species_color <- 'black'
+  }
+  if (species_name == 'Steelhead') {
+    species_color <- 'deepskyblue2'
+  }
+  gini_index <- signif(ineq(df_prop$proportion), digits = 2)
+  print(gini_index)
+  p <- ggplot(data = df_prop, aes(proportion)) +
+    #ggtitle(species_name) +
+    stat_lorenz(desc = FALSE, geom = 'line', color=species_color, size = 2) +
+    coord_fixed(1/4) +
+    geom_abline(linetype = "dashed") +
+    scale_y_continuous(breaks = c(0.0, 0.5, 1.0)) +
+    annotate('text', x = .22, y = .9, label = paste("Gini's Index", gini_index), size = 3.5) + #change text on plot
+    theme(plot.title = element_text(size = 6)) +
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) +
+    theme(axis.title.x=element_blank(), axis.title.y = element_blank()) 
+  
+    #theme(plot.margin = unit(c(0, 3, .2, .2), 'cm'))   # top, 
+  return(p)
+}
+
+```
+
+
+Runthrough Code:
+
+```{r}
+#Get Interspecies Plots along with Gini Index and Loren Graphs
+
+
+#Import Each Species Detections (Filtered)
+gs_det <- read_csv("~/Desktop/TRUE FINAL EVENNESS PROJECT/CSVs/Length Adjusted CSVs/Final_Green_Sturgeon.csv", 
+                   col_types = cols(DetectDate = col_datetime(format = "%Y-%m-%d %H:%M:%S")))
+
+ws_det <- read_csv("~/Desktop/TRUE FINAL EVENNESS PROJECT/CSVs/Length Adjusted CSVs/Final_White_Sturgeon.csv", 
+                   col_types = cols(DetectDate = col_datetime(format = "%Y-%m-%d %H:%M:%S")))
+
+pike_det <- read_csv("~/Desktop/TRUE FINAL EVENNESS PROJECT/CSVs/Length Adjusted CSVs/Final_Pikeminnow.csv", 
+                   col_types = cols(DetectDate = col_datetime(format = "%Y-%m-%d %H:%M:%S")))
+
+sth_det <- read_csv("~/Desktop/TRUE FINAL EVENNESS PROJECT/CSVs/Length Adjusted CSVs/Final_Steelhead.csv", 
+                   col_types = cols(DetectDate = col_datetime(format = "%Y-%m-%d %H:%M:%S")))
+
+sb_det <- read_csv("~/Desktop/TRUE FINAL EVENNESS PROJECT/CSVs/Length Adjusted CSVs/Final_Striped_Bass.csv", 
+                   col_types = cols(DetectDate = col_datetime(format = "%Y-%m-%d %H:%M:%S")))
+
+#check to make sure import went well
+head(gs_det)
+head(ws_det)
+head(pike_det)
+head(sth_det)
+head(sb_det)
+
+df_years <- read_csv("~/Desktop/TRUE FINAL EVENNESS PROJECT/CSVs/water_year_data.csv", 
+                     col_types = cols(end_date = col_character(), 
+                                      start_date = col_character()))
+
+all_det <- rbind(gs_det, pike_det, sb_det, sth_det, ws_det)
+
+det <- select(all_det, DetectDate,TagID, Location, Species, Release_Date, Release_rkm, Detect_rkm, Length, Length_Type, Tag_Type)
+#det <- subset(det, Species == 'White_Sturgeon' | Species == 'Striped_bass' | Species == 'Sacramento_pikeminnow' | Species == 'Steelhead')
+
+
+#Get Motilities
+gsturg_motility <- get_species_motility(det, 'Green_Sturgeon', 1800)
+wsturg_motility <- get_species_motility(det, 'White_Sturgeon', 1600)
+striped_motility <- get_species_motility(det, 'Striped_bass', 440)
+pike_motility <- get_species_motility(det, 'Sacramento_pikeminnow', 310)
+steelhead_motility <- get_species_motility(det, 'Steelhead',350)
+
+#Condense Detections and Convert To Proportionality
+all_green <- smush_motility(gsturg_motility) %>% get_proportionality_total()
+all_white <- smush_motility(wsturg_motility) %>% get_proportionality_total()
+all_striped <- smush_motility(striped_motility) %>% get_proportionality_total()
+all_pike <- smush_motility(pike_motility) %>% get_proportionality_total()
+all_steelhead <- smush_motility(steelhead_motility) %>% get_proportionality_total()
+
+#Assemble Rank/Pielous Plots of All Species
+
+a <- all_years_evenness_species(all_green, 'Green Sturgeon')
+b <- all_years_evenness_species(all_white, 'White Sturgeon')
+c <- all_years_evenness_species(all_pike, 'Sacramento Pikeminnow')
+d <- all_years_evenness_species(all_steelhead, 'Steelhead')
+e <- all_years_evenness_species(all_striped, 'Striped Bass')
+
+#Create Lorenz/Gini Plots for All Species
+f <- get_lorenz_interspecies(all_green, 'Green Sturgeon')
+g <- get_lorenz_interspecies(all_white, 'White Sturgeon')
+h <- get_lorenz_interspecies(all_pike, 'Sacramento Pikeminnow')
+i <- get_lorenz_interspecies(all_steelhead, 'Steelhead')
+j <- get_lorenz_interspecies(all_striped, 'Striped Bass')
+
+#Combine Pairs based on species
+aa <- grid.arrange(a, f, ncol=2, top = textGrob('Green Sturgeon', gp=gpar(fontface='bold',fontsize=10)))
+bb <- grid.arrange(b, g, ncol=2, top = textGrob('White Sturgeon', gp=gpar(fontface='bold',fontsize=10)))
+cc <- grid.arrange(c, h, ncol=2, top = textGrob('Sacramento Pikeminnow', gp=gpar(fontface='bold',fontsize=10)))
+dd <- grid.arrange(d, i, ncol=2, top = textGrob('Steelhead', gp=gpar(fontface='bold',fontsize=10)))
+ee <- grid.arrange(e, j, ncol=2, top = textGrob('Striped Bass', gp=gpar(fontface='bold',fontsize=10)))
+
+#Make Final Plots
+grid.arrange(aa, cc, dd, ee,bb, ncol=1, nrow=5, left = 'Total Movement', 
+             bottom='Rank           Cumulative % of Movement Observations') #Final Product
+
+## X Axis labels will need to be adjusted manually.
+
+```
+
+
+
+
+
+
+
+
