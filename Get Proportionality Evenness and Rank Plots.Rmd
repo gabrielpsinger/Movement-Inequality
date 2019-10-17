@@ -678,15 +678,23 @@ order_year <- function(df, year_vector) {
 
 
 ```{r}
+# playing  with color scales
+# scales::seq_gradient_pal('navy', 'deepskyblue')(seq(0,1,length.out=5))
+# "#000080" "#1F369F" "#2A62BE" "#2790DE" "#00BFFF"
+
+
 create_lorenz_rank <- function(df_proportion) {
   
-  cc <- scales::seq_gradient_pal('mediumaquamarine', 'mediumaquamarine')(seq(0,1,length.out=12))
+  #cc <- scales::seq_gradient_pal('mediumaquamarine', 'mediumaquamarine')(seq(0,1,length.out=12))
   
+  # adding color by water year, Chris' original code can be retored by uncommenting the above line
+  #cc <- c("steelblue", "orange", "firebrick3", "orange", "yellow", "steelblue", "yellow", "orange", "firebrick3", "firebrick3", "yellow", "steelblue")
+  cc <- c("#000080", "#2790DE", "#00BFFF", "#2790DE","#2A62BE", "#000080","#2A62BE", "#2790DE", "#00BFFF", "#00BFFF", "#2A62BE", "#000080" ) # blues
   df_prop <- df_proportion
   df_prop <- order_year(df_prop, all_years)
   df_prop$rank <- c(1:nrow(df_prop))
   all_df_prop <<- df_prop
-  a <-ggplot(data = df_prop, aes(x= rank, y= proportion, color = year)) + 
+  a <-ggplot(data = df_prop, aes(x= rank, y= proportion, color = as.character(year))) + 
     geom_line(size = 2.25, alpha = .8) +
     theme(legend.position = 'none') +
     xlab('Rank') +
@@ -739,19 +747,19 @@ Runthrough Code:
 #Copy and paste this code to a script window for faster speed.
 
 #Import Water Year Data
-df_all_years <- read_csv("~/Desktop/TRUE FINAL EVENNESS PROJECT/CSVs/water_year_data.csv")
+df_all_years <- read_csv("data/water_year_data.csv")
 
 all_years <- c(2006:2017)
 #manually pick which years you want
 
 #Import Detection Data
-new_det <- read_csv("~/Desktop/TRUE FINAL EVENNESS PROJECT/CSVs/Length Adjusted CSVs/Final_Green_Sturgeon.csv", 
+new_det <- read_csv("data/CSVs/Final CSVs/Final_Green_Sturgeon.csv", 
                     col_types = cols(DetectDate = col_datetime(format = "%Y-%m-%d %H:%M:%S")))
 
-#Get Motility
+#Get Motility for Green Sturgeon
 gsturg_motility <- get_species_motility(new_det, 'Green_Sturgeon', 1800, df_all_years)
 
-#Get Proportions
+#Get Proportions for GReen Sturgeon
 gs_prop <- gsturg_motility %>% smush_motility() %>% get_proportionality()
 
 
