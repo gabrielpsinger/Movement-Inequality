@@ -13,13 +13,26 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(dplyr)
 library(ggplot2)
+library(grid)
 library(gridExtra)
 library(vegan)
 library(lubridate)
 library(readr)
-library(gglorenz)
-library(ineq)
-library(opticut)
+library(viridis)
+if (!require("gglorenz")) {
+   install.packages("gglorenz")
+   library(gglorenz)
+}
+
+if (!require("ineq")) {
+   install.packages("ineq")
+   library(ineq)
+}
+
+if (!require("opticut")) {
+   install.packages("opticut")
+   library(opticut)
+}
 ```
 
 ** Load the Following Functions Prior to Executing Example Code **
@@ -368,15 +381,19 @@ determine_relevant_periods <- function(df_det, df_date_ranges) { #WORKING
 
 
 ```{r}
+# edited by Gabe 08/30/2021
+
 assign_bins <- function(df_motility) { #Easy to switch from motility to proportionality
   df <- df_motility
   df$bin <- NA
-  all_years <- unique(df$year)
+  
+   all_years <- unique(df$year)
   for (y in all_years) {
     #calculate bins for ind_year
     ind_year <- subset(df, year == y)
     max_rkm <- max(ind_year$rkm)
-    rounded_max <- round_up(max_rkm, 50)
+    #rounded_max <- round_up(max_rkm, 50) # this is chris's original code, the function doesn't work and I can't find where it came from
+    rounded_max <- dpylr::round_any(max_rkm, 50, f = ceiling) # Gabe's attempt at replacing the above line.
     bins <- binning(ind_year$rkm, breaks = seq(0, rounded_max, by = 50))
     count_vector <- bins$counts
     break_vector <- bins$breaks
@@ -682,6 +699,18 @@ order_year <- function(df, year_vector) {
 # scales::seq_gradient_pal('navy', 'deepskyblue')(seq(0,1,length.out=5))
 # "#000080" "#1F369F" "#2A62BE" "#2790DE" "#00BFFF"
 
+# viridis(5)
+# "#440154FF" "#3B528BFF" "#21908CFF" "#5DC863FF" "#FDE725FF"
+
+# viridis(5, begin = 0.2)
+# "#414487FF" "#2A788EFF" "#22A884FF" "#7AD151FF" "#FDE725FF"
+
+# cividis(5)
+#  "#00204DFF" "#414D6BFF" "#7C7B78FF" "#BCAF6FFF" "#FFEA46FF"
+
+#scales::seq_gradient_pal('dodgerblue3', 'darkorange3')(seq(0,1,length.out=5))
+# "#1874CD" "#7B70A0" "#A16D73" "#BA6946" "#CD6600"
+
 
 create_lorenz_rank <- function(df_proportion) {
   
@@ -689,32 +718,54 @@ create_lorenz_rank <- function(df_proportion) {
   
   # adding color by water year, Chris' original code can be retored by uncommenting the above line
   #cc <- c("steelblue", "orange", "firebrick3", "orange", "yellow", "steelblue", "yellow", "orange", "firebrick3", "firebrick3", "yellow", "steelblue")
-  cc <- c("#000080", "#2790DE", "#00BFFF", "#2790DE","#2A62BE", "#000080","#2A62BE", "#2790DE", "#00BFFF", "#00BFFF", "#2A62BE", "#000080" ) # blues
+ # cc <- c("#000080", "#2790DE", "#00BFFF", "#2790DE","#2A62BE", "#000080","#2A62BE", "#2790DE", "#00BFFF", "#00BFFF", "#2A62BE", "#000080" ) # blues
+  
+   cc <-  c("dodgerblue3",  "#BCAF6FFF", "chocolate3", "#BCAF6FFF","lightsteelblue1",  "dodgerblue3","lightsteelblue1", "#BCAF6FFF", "chocolate3", "chocolate3", "lightsteelblue1", "dodgerblue3" ) # blue to orange
+  
+  #cc <-   c("#440154FF", "#5DC863FF", "#FDE725FF", "#5DC863FF","#21908CFF", "#440154FF","#21908CFF", "#5DC863FF", "#FDE725FF", "#FDE725FF", "#21908CFF", "#440154FF" )# viridis
+  
+  #cc <- c("#414487FF", "#7AD151FF", "#FDE725FF", "#7AD151FF","#22A884FF", "#414487FF","#22A884FF", "#7AD151FF", "#FDE725FF", "#FDE725FF", "#22A884FF", "#414487FF" ) # viridis 0.2
+  
+    #cc <- c("#00204DFF", "#BCAF6FFF", "#FFEA46FF", "#BCAF6FFF","#7C7B78FF", "#00204DFF","#7C7B78FF", "#BCAF6FFF", "#FFEA46FF", "#FFEA46FF", "#7C7B78FF", "#00204DFF" ) # cividis
+  
+  
+  labs <- tibble(yr = 2006:2017, x = c(1, 13, 38, 46, 59, 78, 87, 94, 99, 103.5, 109, 115), 
+                      y = c(0.3577, 0.1805, 0.3264, 0.2285, 0.1694, 0.2198, 0.3269, 
+                            0.4913, 0.6699, 0.2832, 0.2231, 0.7014)) # added for labels
+ 
   df_prop <- df_proportion
   df_prop <- order_year(df_prop, all_years)
   df_prop$rank <- c(1:nrow(df_prop))
   all_df_prop <<- df_prop
-  a <-ggplot(data = df_prop, aes(x= rank, y= proportion, color = as.character(year))) + 
-    geom_line(size = 2.25, alpha = .8) +
+  a <-ggplot() + 
+    geom_line(data = df_prop, aes(x= rank, y= proportion, color = as.character(year)),
+            size = 2.25, alpha = .8) +
+    geom_label(data = labs, aes(x = x, y = y, label = yr)) + 
     theme(legend.position = 'none') +
     xlab('Rank') +
-    ylab('Total Movement') +
+   ylab('') +
     coord_cartesian(ylim = c(0, .75), xlim = c(0, nrow(df_prop))) +
     scale_y_continuous(breaks = c(0.0, 0.25, .50, .75)) +
+    scale_x_continuous(labels = (2006:2017), breaks = c(5, 20, 42, 50, 68, 82, 90, 96, 100, 104, 
+                                                        111, 116)) + # new line
     theme_bw() +
-    theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), #axis.title.x=element_blank(),
+    theme(panel.grid.major = element_blank(), 
+          panel.grid.minor = element_blank(), 
+          #axis.title.x=element_blank(),
           axis.text.x=element_blank(),
-          axis.ticks.x=element_blank()) +
+          axis.ticks.x=element_blank(), 
+          axis.title=element_text(size=16)
+          ) +
     scale_color_manual(values=cc) +
     theme(legend.position="none")
   
   df_lorenz <- df_prop %>% get_lorenz_values() %>% adjust_lorenz_values()
   all_df_lorenz <<- df_lorenz
   
-  b <- ggplot(df_lorenz, aes(x=p, y=L, color =  as.character(year))) + geom_line() +
-    scale_color_manual(values = cc) +
+  b <- ggplot(df_lorenz, aes(x=p, y=L, group =  as.character(year))) + geom_line() +
+    #scale_color_manual(values = cc) +  #also swapped color for group from above
     xlab('Cumulative % of Movement Observations') +
-    ylab('Total Movement') +
+    ylab('') +
     geom_abline(linetype = 'dashed') +
     geom_abline(linetype = 'dashed', slope = 1, intercept = -1) +
     geom_abline(linetype = 'dashed', slope = 1, intercept = -2) +
@@ -731,11 +782,12 @@ create_lorenz_rank <- function(df_proportion) {
     theme(legend.position="none") +
     theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
           axis.text.x=element_blank(),
-          axis.ticks.x=element_blank())
+          axis.ticks.x=element_blank(),
+          axis.title=element_text(size=16))
   
   plot_list <- list(a, b)
   
-  combined_plot <- grid.arrange(a, b)
+  combined_plot <- grid.arrange(a, b, left = textGrob("Total Movement", rot = 90, gp = gpar(fontsize = 16)))
   return(combined_plot)
 }
 ```
@@ -753,7 +805,7 @@ all_years <- c(2006:2017)
 #manually pick which years you want
 
 #Import Detection Data
-new_det <- read_csv("data/CSVs/Final CSVs/Final_Green_Sturgeon.csv", 
+new_det <- read_csv("data/Final_Green_Sturgeon.csv", 
                     col_types = cols(DetectDate = col_datetime(format = "%Y-%m-%d %H:%M:%S")))
 
 #Get Motility for Green Sturgeon
@@ -769,5 +821,12 @@ create_lorenz_rank(gs_prop)
 ```
 
 
+```{r}
+# Gabe's test code
+
+gs_test <- get_species_motility(new_det, 'Green_Sturgeon', 1800, df_all_years)
+
+gs_test_bins <- assign_bins(gs_test)
+```
 
 
